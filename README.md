@@ -1,27 +1,16 @@
 # RideFlow 🛴
 
-Electric scooter sharing platform for the Georgian market.
-
-## Stack
-
-- Laravel 13 + Filament 5 — API, admin panel, web QR flow
-- Python TCP server — persistent IoT device communication
-- MySQL — primary database
-- Flitt (TBC Group) — payment processing
-- OMNI M151 — IoT scooter hardware
-- Leaflet.js — maps and geofencing
-- Docker — containerized deployment
-- Nginx + Let's Encrypt — reverse proxy with SSL
-
-## Architecture
-
-```
-Rider scans QR → Laravel → Flitt payment → Python TCP → OMNI M151 → Scooter unlocks
-```
-
-Python maintains persistent TCP connections to scooters.
-Laravel communicates with Python via internal HTTP bridge on port 8080.
+Python maintains permanent TCP connections to scooters on port 9000.
+Laravel is stateless — all cross-layer communication travels as HTTP to the Python service on port 8080.
 Riders are anonymous — no accounts, no registration. Scan, pay, ride.
+
+## What makes it technically interesting
+
+- **No SDK existed.** Built entirely from raw protocol documentation.
+- **Cryptographic 3-step unlock handshake:** R0 request → scooter replies with KEY → L0 confirm with KEY. Wrong KEY = no unlock.
+- **Pluggable IoT architecture:** `core/` layer is completely device-agnostic. Adding a new hardware device = adding a new folder under `devices/`. Zero changes to core.
+- **Ray casting geofencing** — server-side point-in-polygon algorithm, not a library.
+- **Anonymous ride flow** — identity tied to payment session only. No user accounts anywhere in the system.
 
 ## Features
 
@@ -34,30 +23,32 @@ Riders are anonymous — no accounts, no registration. Scan, pay, ride.
 
 ### IoT / TCP
 
-- Raw TCP server — OMNI M151 protocol (Q0, H0, R0, L0, L1, D0, D1, S4, V0, W0)
-- Full unlock handshake: R0 request → KEY exchange → L0 confirm
+- Python asyncio TCP server — persistent connections, handles multiple scooters simultaneously
+- Full OMNI M151 protocol: Q0 (check-in), H0 (heartbeat + battery), R0/KEY/L0 (unlock handshake), L1 (lock + ride duration), D1 (real-time GPS), S4 (speed cap), V0 (beep), W0 (alarm)
 - Real-time GPS tracking (D1) during rides
 - Heartbeat monitoring (H0) — battery % updated every 4 minutes
-- Pluggable device architecture: `core/` + `devices/omni_m151/` — add new devices without touching core
+- Pluggable device architecture: `core/` + `devices/omni_m151/` — new device = new folder, no core changes
 
 ### Geofencing
 
-- Server-side ray casting polygon algorithm
-- Violation sequence: beep → speed cap (6km/h) → grace period → lock → admin email
+- Server-side ray casting point-in-polygon algorithm
+- Violation sequence: beep → speed cap (6 km/h) → grace period → lock → admin email
 - Event-driven: `ScooterLeftZoneEvent` / `ScooterReturnedToZoneEvent`
-- Multi-zone support — admin draws polygons via Leaflet.draw
+- Multi-zone support — admin draws polygons via Leaflet.draw directly on the map
 
 ### Payments
 
-- Flitt direct charge — upfront payment before unlock
-- Signature verification on every callback
+- Flitt (TBC Group) direct charge — upfront payment before unlock
+- SHA1 signature generation and verification on every callback
+- QR scan → package selection → Flitt checkout → callback → unlock — one uninterrupted flow
 - No partial refunds — fixed price, fixed time
 
 ### Admin panel (Filament 5)
 
-- Scooter management — status, battery, live GPS location
+- Scooter management — status, battery %, live GPS location
 - Ride and payment records — view only
-- Zone editor — interactive polygon drawing on Leaflet map
+- Zone editor — interactive Leaflet.js polygon drawing on live map
+- One-click beep and recover actions per scooter
 - DB-driven settings — unlock fee, timeout buffer, support contacts
 
 ### Infrastructure
@@ -71,7 +62,7 @@ Riders are anonymous — no accounts, no registration. Scan, pay, ride.
 
 - 80+ Pest tests — payment flow, geofencing, ride lifecycle, API endpoints
 - 62 pytest tests — TCP parser, commands, protocol handlers
-- GitHub Actions CI — runs all tests on every push to main
+- GitHub Actions CI — runs both suites on every push to main
 
 ## Running locally
 
